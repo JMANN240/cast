@@ -12,7 +12,7 @@ var connections = {};
 
 $.ajax({
   type: 'GET',
-  url: '/settings',
+  url: '/static/settings.json',
   success: (res) => {
     socket = io.connect(res.socketio_host + ':' + res.port);
 
