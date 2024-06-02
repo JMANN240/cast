@@ -16,6 +16,7 @@ use hyper_util::{
 use std::{convert::Infallible, path::PathBuf, sync::Arc};
 use tokio::net::{unix::UCred, UnixListener, UnixStream};
 use tower::Service;
+use tower_http::services::ServeDir;
 
 #[derive(Parser)]
 struct Args {
@@ -37,7 +38,8 @@ async fn main() {
 	let handle = tokio::spawn(async move {
 		println!("1");
 		let app = Router::new()
-			.route("/", get(root));
+			.route("/", get(root))
+			.nest_service("/static", ServeDir::new("static"));
 
 		let mut make_service = app.into_make_service_with_connect_info::<UdsConnectInfo>();
 
