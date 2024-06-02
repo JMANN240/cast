@@ -1,5 +1,5 @@
 use clap::Parser;
-
+use serde::{Deserialize, Serialize};
 use axum::{
 	body::Body,
 	extract::connect_info::{self, ConnectInfo},
@@ -13,7 +13,9 @@ use hyper_util::{
 	rt::{TokioExecutor, TokioIo},
 	server,
 };
-use std::{convert::Infallible, path::PathBuf, sync::Arc};
+use serde_json::from_str;
+use socketioxide::{SocketIo, extract::{SocketRef, Data}, socket::Sid};
+use std::{convert::Infallible, path::PathBuf, sync::Arc, str::FromStr};
 use tokio::net::{unix::UCred, UnixListener, UnixStream};
 use tower::Service;
 use tower_http::services::ServeDir;
@@ -22,6 +24,33 @@ use tower_http::services::ServeDir;
 struct Args {
 	#[arg(long, value_name = "PATH")]
 	uds: String
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Offer {
+	to_id: String,
+	from_id: String,
+	offer: serde_json::Value
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Answer {
+	to_id: String,
+	from_id: String,
+	answer: serde_json::Value
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Candidate {
+	to_id: String,
+	from_id: String,
+	cnd: serde_json::Value
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Watcher {
+	to_id: String,
+	from_id: String
 }
 
 #[tokio::main]
@@ -34,18 +63,52 @@ async fn main() {
 	tokio::fs::create_dir_all(uds_path.parent().unwrap()).await.unwrap();
 
 	let uds = UnixListener::bind(uds_path.clone()).unwrap();
-	println!("3");
+
+	let (socketio_layer, socketio) = SocketIo::new_layer();
+
+	let socket_socketio = socketio.clone();
+
+	socketio.ns("/", move |socket: SocketRef| {
+		let offer_socketio = socket_socketio.clone();
+
+		socket.on("offer", move |Data::<Offer>(offer)| {
+			let to_socket = offer_socketio.get_socket(Sid::from_str(&offer.to_id).unwrap()).unwrap();
+			to_socket.emit("offer", offer).unwrap();
+		});
+
+		let answer_socketio = socket_socketio.clone();
+
+		socket.on("answer", move |Data::<Answer>(answer)| {
+			let to_socket = answer_socketio.get_socket(Sid::from_str(&answer.to_id).unwrap()).unwrap();
+			to_socket.emit("answer", answer).unwrap();
+		});
+
+		let candidate_socketio = socket_socketio.clone();
+
+		socket.on("candidate", move |Data::<Candidate>(candidate)| {
+			let to_socket = candidate_socketio.get_socket(Sid::from_str(&candidate.to_id).unwrap()).unwrap();
+			to_socket.emit("candidate", candidate).unwrap();
+		});
+
+		let watcher_socketio = socket_socketio.clone();
+
+		socket.on("watcher", move |Data::<Watcher>(watcher)| {
+			let to_socket = watcher_socketio.get_socket(Sid::from_str(&watcher.to_id).unwrap()).unwrap();
+			to_socket.emit("watcher", watcher).unwrap();
+		});
+	});
+
 	let handle = tokio::spawn(async move {
-		println!("1");
 		let app = Router::new()
 			.route("/", get(root))
-			.nest_service("/static", ServeDir::new("static"));
+			.nest_service("/static", ServeDir::new("static"))
+			.layer(socketio_layer);
 
 		let mut make_service = app.into_make_service_with_connect_info::<UdsConnectInfo>();
 
 		loop {
 			let (socket, _remote_addr) = uds.accept().await.unwrap();
-			println!("5");
+
 			let tower_service = make_service.call(&socket).await.unwrap();
 
 			tokio::spawn(async move {
@@ -65,7 +128,6 @@ async fn main() {
 		}
 	});
 	handle.await.unwrap();
-	println!("4");
 }
 
 async fn root() -> &'static str {
